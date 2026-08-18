@@ -11,6 +11,13 @@ import (
 	"login-system/internal/repository"
 )
 
+const (
+	// DefaultSessionDuration is the default session expiration time.
+	DefaultSessionDuration = 2 * time.Hour
+	// RememberMeSessionDuration is the session expiration time when "remember me" is enabled.
+	RememberMeSessionDuration = 30 * 24 * time.Hour
+)
+
 // Manager manages user sessions.
 type Manager struct {
 	sessionRepo repository.SessionRepository
@@ -50,9 +57,9 @@ func (m *Manager) CreateSession(userID int64, ip, userAgent string, rememberMe b
 		return nil, "", fmt.Errorf("generate token: %w", err)
 	}
 
-	expiresAt := time.Now().Add(2 * time.Hour)
+	expiresAt := time.Now().Add(DefaultSessionDuration)
 	if rememberMe {
-		expiresAt = time.Now().Add(30 * 24 * time.Hour)
+		expiresAt = time.Now().Add(RememberMeSessionDuration)
 	}
 
 	session := &models.Session{

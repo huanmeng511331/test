@@ -1,30 +1,68 @@
 package ratelimit
 
 import (
+	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
+)
+
+// TrustedProxies holds the list of trusted proxy IP addresses.
+// When empty (default), X-Forwarded-For is ignored for security.
+var TrustedProxies []string
+
+const (
+	judgeWindow  = 15 * time.Minute
+	lockDuration = 15 * time.Minute
+	staleThreshold = 30 * time.Minute
 )
 
 // RateLimiter tracks login failures and rate limits.
 type RateLimiter struct {
 	mu       sync.RWMutex
 	attempts map[string]*attemptInfo
+	stopCh   chan struct{}
 }
 
 type attemptInfo struct {
-	count     int
-	lastFail  time.Time
+	count       int
+	lastFail    time.Time
 	lockedUntil *time.Time
 }
 
 // NewRateLimiter creates a new RateLimiter.
 func NewRateLimiter() *RateLimiter {
-	return &RateLimiter{
+	r := &RateLimiter{
 		attempts: make(map[string]*attemptInfo),
+		stopCh:   make(chan struct{}),
 	}
+
+	// Start background cleanup goroutine to avoid blocking writes.
+	go r.backgroundCleanup()
+
+	return r
 }
 
-const staleThreshold = 15 * time.Minute
+// Stop stops the background cleanup goroutine.
+func (r *RateLimiter) Stop() {
+	close(r.stopCh)
+}
+
+func (r *RateLimiter) backgroundCleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			r.mu.Lock()
+			r.cleanup()
+			r.mu.Unlock()
+		case <-r.stopCh:
+			return
+		}
+	}
+}
 
 // cleanup removes stale entries to prevent unbounded memory growth.
 func (r *RateLimiter) cleanup() {
@@ -41,8 +79,6 @@ func (r *RateLimiter) RecordFailure(key string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.cleanup()
-
 	info, exists := r.attempts[key]
 	if !exists {
 		info = &attemptInfo{}
@@ -57,22 +93,25 @@ func (r *RateLimiter) IsLocked(key string) (bool, time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.cleanup()
-
 	info, exists := r.attempts[key]
 	if !exists {
 		return false, 0
 	}
 
 	// If locked, check if lock has expired
-	if info.lockedUntil != nil && time.Now().Before(*info.lockedUntil) {
-		return true, info.lockedUntil.Sub(time.Now())
+	if info.lockedUntil != nil {
+		if time.Now().Before(*info.lockedUntil) {
+			return true, info.lockedUntil.Sub(time.Now())
+		}
+		// Lock expired: reset count and clear lockedUntil for a fresh start
+		info.count = 0
+		info.lockedUntil = nil
 	}
 
-	// Check if 5 failures within last 15 minutes
-	if info.count >= 5 && time.Since(info.lastFail) < 15*time.Minute {
-		// Lock for 15 minutes from last failure
-		lockedUntil := info.lastFail.Add(15 * time.Minute)
+	// Check if 5 failures within judge window
+	if info.count >= 5 && time.Since(info.lastFail) < judgeWindow {
+		// Lock for lockDuration from last failure
+		lockedUntil := info.lastFail.Add(lockDuration)
 		info.lockedUntil = &lockedUntil
 		return true, lockedUntil.Sub(time.Now())
 	}
@@ -125,8 +164,58 @@ func (r *IPRateLimiter) Allow(ip string) bool {
 			valid = append(valid, t)
 		}
 	}
+
+	// Reject if limit exceeded; do NOT append now for rejected requests
+	if len(valid) >= r.limit {
+		return false
+	}
+
 	valid = append(valid, now)
 	r.requests[ip] = valid
 
-	return len(valid) <= r.limit
+	return true
+}
+
+// GetClientIP extracts the client IP from the request.
+// By default, it uses RemoteAddr and ignores X-Forwarded-For
+// unless TrustedProxies is configured.
+func GetClientIP(r *http.Request) string {
+	ip := r.RemoteAddr
+	// Strip port if present
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	}
+
+	fwd := r.Header.Get("X-Forwarded-For")
+	if fwd == "" || len(TrustedProxies) == 0 {
+		return ip
+	}
+
+	// Check if RemoteAddr is from a trusted proxy
+	if !isTrusted(ip) {
+		return ip
+	}
+
+	// Iterate from right (closest to server) to left, find first non-trusted IP
+	parts := strings.Split(fwd, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(parts[i])
+		if candidate == "" {
+			continue
+		}
+		if !isTrusted(candidate) {
+			return candidate
+		}
+	}
+
+	return ip
+}
+
+func isTrusted(ip string) bool {
+	for _, trusted := range TrustedProxies {
+		if strings.TrimSpace(trusted) == ip {
+			return true
+		}
+	}
+	return false
 }

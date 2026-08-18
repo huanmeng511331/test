@@ -16,7 +16,10 @@ import (
 var fakeHash string
 
 func init() {
-	fakeHashBytes, _ := bcrypt.GenerateFromPassword([]byte("fake"), bcrypt.DefaultCost)
+	fakeHashBytes, err := bcrypt.GenerateFromPassword([]byte("fake"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate fake hash: %v", err))
+	}
 	fakeHash = string(fakeHashBytes)
 }
 
@@ -45,10 +48,10 @@ func NewAuthService(
 
 // LoginResult contains the result of a login attempt.
 type LoginResult struct {
-	Success   bool
-	Message   string
-	User      *models.User
-	Token     string
+	Success    bool
+	Message    string
+	User       *models.User
+	Token      string
 	StatusCode int
 }
 
@@ -56,6 +59,8 @@ type LoginResult struct {
 func (s *AuthService) Login(account, password string, rememberMe bool, ip, userAgent string) *LoginResult {
 	user, err := s.userRepo.GetByAccount(account)
 	if err != nil {
+		// Perform fake hash comparison to prevent timing attacks
+		_ = s.passwordHasher.Verify(password, fakeHash)
 		return &LoginResult{
 			Success:    false,
 			Message:    "账号或密码错误",

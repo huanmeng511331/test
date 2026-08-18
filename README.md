@@ -5,7 +5,7 @@ A secure user login subsystem built with Go, implementing authentication with pa
 ## Features
 
 - **Account/Password Authentication**: Secure login with username and password
-- **Password Hashing**: SHA256 with salt (production should use bcrypt/Argon2)
+- **Password Hashing**: bcrypt with configurable cost
 - **Session Management**: Cookie-based sessions with configurable expiration
 - **Rate Limiting**: IP-based and account-based rate limiting to prevent brute force attacks
 - **Security**: HttpOnly, Secure, SameSite cookies; timing-attack resistant login flow
@@ -111,7 +111,7 @@ The system is designed with clean architecture principles:
 
 ## Security Considerations
 
-- Passwords are hashed with SHA256 and a random salt
+- Passwords are hashed with bcrypt (configurable cost)
 - Login responses are timing-attack resistant (fake hash comparison for non-existent accounts)
 - Sessions use HttpOnly, Secure, and SameSite=Lax cookies
 - Rate limiting prevents brute force attacks on login endpoint
@@ -119,7 +119,6 @@ The system is designed with clean architecture principles:
 
 ## Production Recommendations
 
-- Replace SHA256 with bcrypt or Argon2 for password hashing
 - Use a persistent database (PostgreSQL/MySQL) instead of in-memory storage
 - Enable HTTPS in production
 - Set `Secure` cookie flag to true in production
