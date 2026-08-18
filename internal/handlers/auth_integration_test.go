@@ -10,6 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"time"
+
+	"login-system/internal/auth"
 	"login-system/internal/config"
 	"login-system/internal/middleware"
 	"login-system/internal/testutil"
@@ -28,6 +31,12 @@ func TestLoginIntegration_FullFlow(t *testing.T) {
 	}
 
 	gin.SetMode(gin.TestMode)
+
+	// Initialize shared token blacklist for tests
+	bl := auth.NewTokenBlacklist(1 * time.Minute)
+	TokenBlacklist = bl
+	middleware.SetTokenBlacklist(bl)
+
 	router := gin.New()
 	router.POST("/api/v1/auth/login", LoginHandler(cfg))
 	router.POST("/api/v1/auth/logout", middleware.AuthMiddleware(cfg), LogoutHandler(cfg))

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"login-system/internal/auth"
 	"login-system/internal/config"
 	"login-system/internal/handlers"
 	"login-system/internal/middleware"
@@ -36,6 +37,11 @@ func New(cfg *config.Config, database *gorm.DB) *Server {
 
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery())
+
+	// Initialize shared token blacklist with periodic cleanup
+	tokenBlacklist := auth.NewTokenBlacklist(10 * time.Minute)
+	handlers.TokenBlacklist = tokenBlacklist
+	middleware.SetTokenBlacklist(tokenBlacklist)
 
 	// Health check endpoint
 	engine.GET("/health", func(c *gin.Context) {

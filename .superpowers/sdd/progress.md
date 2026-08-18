@@ -25,7 +25,16 @@
 - Description: 单元测试、集成测试、测试辅助工具
 - Files: internal/handlers/auth_test.go, internal/handlers/auth_integration_test.go, internal/testutil/testutil.go
 
+## Review Fixes (7 Blocking Issues)
+- **B-001**: AuthMiddleware now checks `TokenBlacklist.IsBlacklisted()` after JWT validation — logout properly invalidates tokens.
+- **B-002**: Fixed `string(user.ID)` → `strconv.FormatUint(uint64(user.ID), 10)` to avoid Unicode code-point corruption.
+- **B-003**: IP rate limiter now runs a background goroutine that periodically deletes expired `ipBucket` entries.
+- **B-004**: Replaced in-memory `map[string]bool` token blacklist with `auth.TokenBlacklist` that stores expiration times and runs periodic cleanup.
+- **B-005**: `FailedAttemptTracker` now stores `lastFailed` and runs a background cleanup goroutine to remove expired lockout entries.
+- **B-006**: `database.AutoMigrate` error is now properly captured and returned during `InitDB`.
+- **B-007**: `LoginHandler` now calls `user.IsLocked()` after loading the user from the database to enforce DB-level lock status.
+
 ## Notes
-- 所有代码文件基于仓库根目录创建
+- 所有代码文件基于仓库根目录创建/修改
 - 由于运行时环境缺少 Go 编译器，未执行 `go build` / `go test`
 - Git 操作受限于只读模式，未执行 commit

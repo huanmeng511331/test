@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,8 +21,8 @@ const (
 
 var (
 	lockoutTracker = auth.NewFailedAttemptTracker()
-	tokenBlacklist = make(map[string]bool)
-	blacklistMu    sync.RWMutex
+	// TokenBlacklist is the shared token blacklist instance. It should be set during app initialization.
+	TokenBlacklist *auth.TokenBlacklist
 )
 
 // LoginRequest represents the login request body.
@@ -85,6 +85,12 @@ func LoginHandler(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
+		// Check if account is locked at database level
+		if user.IsLocked() {
+			utils.Error(c, 10003, "账号已被锁定，请联系管理员")
+			return
+		}
+
 		// Verify password
 		if err := utils.CheckPassword(req.Password, user.PasswordHash); err != nil {
 			// Wrong password - record failed attempt
@@ -115,7 +121,7 @@ func LoginHandler(cfg *config.Config) gin.HandlerFunc {
 			Token:     token,
 			ExpiresAt: expiresAt,
 			User: UserInfo{
-				ID:          string(user.ID),
+				ID:          strconv.FormatUint(uint64(user.ID), 10),
 				Username:    user.Username,
 				DisplayName: user.DisplayName,
 			},
@@ -134,18 +140,13 @@ func LogoutHandler(cfg *config.Config) gin.HandlerFunc {
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
-			blacklistMu.Lock()
-			tokenBlacklist[parts[1]] = true
-			blacklistMu.Unlock()
+			if TokenBlacklist != nil {
+				// Blacklist the token with its expiration time from the config
+				expiresAt := time.Now().Add(time.Duration(cfg.JWTExpireHours) * time.Hour)
+				TokenBlacklist.Add(parts[1], expiresAt)
+			}
 		}
 
 		utils.Success(c, nil)
 	}
-}
-
-// IsTokenBlacklisted checks if a token has been revoked.
-func IsTokenBlacklisted(token string) bool {
-	blacklistMu.RLock()
-	defer blacklistMu.RUnlock()
-	return tokenBlacklist[token]
 }

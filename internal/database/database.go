@@ -47,7 +47,10 @@ func InitDB(dsn string) (*gorm.DB, error) {
 		mu.Unlock()
 
 		// Auto-migrate models
-		database.AutoMigrate(&models.User{})
+		if err := database.AutoMigrate(&models.User{}); err != nil {
+			initErr = fmt.Errorf("failed to auto migrate: %w", err)
+			return
+		}
 	})
 
 	if initErr != nil {

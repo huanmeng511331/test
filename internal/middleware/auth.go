@@ -35,7 +35,23 @@ func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
+		// Check if token has been blacklisted (logged out)
+		if TokenBlacklist != nil && TokenBlacklist.IsBlacklisted(tokenString) {
+			utils.Unauthorized(c)
+			c.Abort()
+			return
+		}
+
 		c.Set("userID", claims.UserID)
 		c.Next()
 	}
+}
+
+// TokenBlacklist is the shared token blacklist instance used across the application.
+// It is set by the application setup code.
+var TokenBlacklist *auth.TokenBlacklist
+
+// SetTokenBlacklist sets the global token blacklist instance for the middleware.
+func SetTokenBlacklist(bl *auth.TokenBlacklist) {
+	TokenBlacklist = bl
 }

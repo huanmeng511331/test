@@ -14,12 +14,38 @@ type FailedAttemptTracker struct {
 type attemptInfo struct {
 	count       int
 	lockedUntil *time.Time
+	lastFailed  time.Time
 }
 
-// NewFailedAttemptTracker creates a new FailedAttemptTracker.
+// NewFailedAttemptTracker creates a new FailedAttemptTracker with periodic cleanup.
 func NewFailedAttemptTracker() *FailedAttemptTracker {
-	return &FailedAttemptTracker{
+	t := &FailedAttemptTracker{
 		attempts: make(map[string]*attemptInfo),
+	}
+	go t.cleanupLoop()
+	return t
+}
+
+// cleanupLoop periodically removes expired lockout entries to prevent unbounded memory growth.
+func (t *FailedAttemptTracker) cleanupLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		t.cleanup()
+	}
+}
+
+// cleanup removes entries that are no longer locked and have expired.
+func (t *FailedAttemptTracker) cleanup() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	for key, info := range t.attempts {
+		if info.lockedUntil != nil && now.After(*info.lockedUntil) {
+			delete(t.attempts, key)
+		} else if info.count == 0 && now.Sub(info.lastFailed) > 10*time.Minute {
+			delete(t.attempts, key)
+		}
 	}
 }
 
@@ -35,6 +61,7 @@ func (t *FailedAttemptTracker) RecordFailedAttempt(key string) int {
 		t.attempts[key] = info
 	}
 	info.count++
+	info.lastFailed = time.Now()
 	return info.count
 }
 

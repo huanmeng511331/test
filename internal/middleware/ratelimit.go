@@ -28,6 +28,22 @@ func IPRateLimitMiddleware(config RateLimitConfig) gin.HandlerFunc {
 	buckets := make(map[string]*ipBucket)
 	var mu sync.RWMutex
 
+	// Start a background goroutine to clean up expired buckets periodically.
+	go func() {
+		ticker := time.NewTicker(config.Window)
+		defer ticker.Stop()
+		for range ticker.C {
+			mu.Lock()
+			now := time.Now()
+			for ip, bucket := range buckets {
+				if now.After(bucket.resetTime) {
+					delete(buckets, ip)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
 	return func(c *gin.Context) {
 		ip := getClientIP(c)
 		now := time.Now()
