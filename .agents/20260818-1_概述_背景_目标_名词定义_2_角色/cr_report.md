@@ -1,180 +1,220 @@
-# 代码评审报告 (Code Review Report)
+# 登录系统实现 — 代码评审报告
 
-**评审对象:** 登录系统实现 (Login System Implementation)
-**评审范围:** `README.md`, `go.mod`, `internal/db/db.go`, `internal/migrate/migrate.go`, `cmd/server/main.go`, `internal/dto/auth_request.go`, `internal/dto/auth_response.go`, `internal/handler/auth_handler.go`, `internal/middleware/auth_middleware.go`, `internal/middleware/rate_limit_middleware.go`, `internal/models/session.go`, `internal/models/user.go`, `internal/ratelimit/ratelimiter.go`, `internal/repository/session_repository.go`, `internal/repository/user_repository.go`, `internal/service/auth_service.go`, `internal/session/manager.go`, `pkg/crypto/password.go`, `tests/integration/auth_test.go`
-**评审日期:** 2025-08-20
+> **评审对象：** 登录系统实现（Login System Implementation）
+> **评审范围：** `README.md`, `go.mod`, `internal/db/db.go`, `internal/migrate/migrate.go`, `cmd/server/main.go`, `internal/dto/auth_request.go`, `internal/dto/auth_response.go`, `internal/handler/auth_handler.go`, `internal/middleware/auth_middleware.go`, `internal/middleware/rate_limit_middleware.go`, `internal/models/session.go`, `internal/models/user.go`, `internal/ratelimit/ratelimiter.go`, `internal/repository/session_repository.go`, `internal/repository/user_repository.go`, `internal/service/auth_service.go`, `internal/session/manager.go`, `pkg/crypto/password.go`, `tests/integration/auth_test.go`
+> **评审日期：** 2025-08-20
 
 ---
 
 ## 1. 总体评价
 
-本次实现整体架构清晰，采用了 Clean Architecture 分层设计（Handler → Service → Repository），代码结构良好，集成测试覆盖了主要验收场景。但存在 **3 个阻塞性问题（blocking）**，涉及安全、并发正确性，必须在合并前修复。
+本次实现整体架构清晰，采用了 Clean Architecture 分层设计（Handler → Service → Repository），代码结构良好，集成测试覆盖了主要验收场景。但存在 **3 个阻塞性问题（blocking）**，涉及安全、资源管理与正确性，必须在合并前修复。
 
 ---
 
 ## 2. 🔴 阻塞性问题 (Blocking)
 
-### 🔴 B-1: 密码哈希使用 SHA256 而非 bcrypt/Argon2
+### 🔴 B-1: 假哈希格式无效，时序攻击防护失效
 
-**文件:** `pkg/crypto/password.go`
-**行号:** 1-67
-**描述:** 当前实现使用 SHA256+salt 进行密码哈希，而实施计划明确要求使用 bcrypt（cost ≥ 12）或 Argon2id（见计划 5.1 节）。SHA256 不是为密码哈希设计的算法，抗彩虹表和暴力破解能力远弱于 bcrypt/Argon2。
-**影响:** 直接违反验收标准 AC-8（"密码在数据库中以明文或弱哈希存储" → 测试应失败）。
-**建议:** 引入 `golang.org/x/crypto/bcrypt` 实现 `PasswordHasher` 接口，替换 `SHA256Hasher`。
-
+**文件:** `internal/service/auth_service.go:59`
+**代码:**
 ```go
-// 建议实现
-type BcryptHasher struct {
-    cost int
+_ = s.passwordHasher.Verify(password, "$2a$12$fakehashforconstanttimecomparison")
+```
+
+**问题:** 该字符串不是合法的 bcrypt 哈希。`bcrypt.CompareHashAndPassword` 在接收到格式错误的哈希时会 **立即返回错误**（耗时 ≈0 ms），而对比真实 bcrypt 哈希（cost=12）约需 **100 ms**。攻击者可以通过测量响应时间差异轻松枚举有效账号，完全违背了“防枚举”设计目标。
+
+**建议修复:**
+```go
+// 在包初始化时生成一个合法的假哈希
+var fakeHash string
+
+func init() {
+    fakeHash, _ = bcrypt.GenerateFromPassword([]byte("fake"), bcrypt.DefaultCost)
 }
 
-func (h *BcryptHasher) Hash(password string) (string, error) {
-    bytes, err := bcrypt.GenerateFromPassword([]byte(password), h.cost)
-    return string(bytes), err
-}
-
-func (h *BcryptHasher) Verify(password, hash string) error {
-    return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-}
+// 登录流程中使用
+_ = s.passwordHasher.Verify(password, string(fakeHash))
 ```
 
 ---
 
-### 🔴 B-2: RateLimiter.IsLocked 存在数据竞争
+### 🔴 B-2: RateLimiter 内存泄漏 / DoS 风险
 
-**文件:** `internal/ratelimit/ratelimiter.go`
-**行号:** 42-65
-**描述:** `IsLocked` 方法持有 `RLock`（读锁），但在方法内部第 60 行修改了 `info.lockedUntil`（写操作）。这违反了 Go 的读写锁语义，在高并发场景下会导致数据竞争（data race）。
-
+**文件:** `internal/ratelimit/ratelimiter.go:11`
+**代码:**
 ```go
-// 问题代码 (ratelimiter.go:52-61)
-if info.lockedUntil != nil && time.Now().Before(*info.lockedUntil) {
-    return true, info.lockedUntil.Sub(time.Now())
-}
-// ...
-if info.count >= 5 && time.Since(info.lastFail) < 15*time.Minute {
-    lockedUntil := info.lastFail.Add(15 * time.Minute)
-    info.lockedUntil = &lockedUntil  // ← 在 RLock 下写入！
-    return true, lockedUntil.Sub(time.Now())
+type RateLimiter struct {
+    mu       sync.RWMutex
+    attempts map[string]*attemptInfo
 }
 ```
 
-**建议:** `IsLocked` 应使用 `Lock()`（写锁），或采用更精细的锁策略。由于该方法会修改状态，不应使用读锁。
+**问题:** `attempts` 中的条目仅在成功登录时通过 `Reset()` 删除。对于不存在的账号或持续失败的暴力破解请求，条目将 **无限累积**，最终耗尽内存导致 OOM。在生产环境中，攻击者可以轻易利用此漏洞发起 DoS 攻击。
+
+**建议修复:**
+1. 为 `attemptInfo` 增加 TTL 机制，定期清理过期条目；
+2. 或改用支持过期时间的缓存（如 Redis / 支持 TTL 的本地缓存）。
+
+```go
+type attemptInfo struct {
+    count       int
+    lastFail    time.Time
+    lockedUntil *time.Time
+}
+
+// 在 IsLocked/RecordFailure 中清理 15 分钟前未更新的条目
+```
 
 ---
 
-### 🔴 B-3: 防时序攻击的假哈希与真实哈希器不匹配
+### 🔴 B-3: 登出时 Cookie 未被正确清除
 
-**文件:** `internal/service/auth_service.go`
-**行号:** 57-65
-**描述:** 当账号不存在时，代码执行假哈希比较以防御时序攻击：
-
+**文件:** `internal/session/manager.go:120`
+**代码:**
 ```go
-if user == nil {
-    _ = s.passwordHasher.Verify(password, "$2a$12$fakehashforconstanttimecomparison")
-    return &LoginResult{...}
+func ClearCookie(w http.ResponseWriter, secure bool) {
+    http.SetCookie(w, &http.Cookie{
+        Name:     "session_id",
+        Value:    "",
+        Path:     "/",
+        HttpOnly: true,
+        Secure:   secure,
+        SameSite: http.SameSiteLaxMode,
+        MaxAge:   -1,  // ❌ 问题所在
+    })
 }
 ```
 
-然而实际注入的 `passwordHasher` 是 `SHA256Hasher`，其 `Verify` 方法解析的是 `salt:hash` 格式。传入的 `$2a$12$...` 字符串无法被正确解析（`parts` 长度为 1），`Verify` 会立即返回错误，导致假比较的执行时间远短于真实比较，失去了时序攻击防护意义。
+**问题:** Go 的 `http.Cookie` 中，`MaxAge < 0` 表示 **不设置 Max-Age 属性**。浏览器会将其视为 Session Cookie，仅在浏览器关闭时删除，而非立即清除。登出后客户端仍会继续发送该 Cookie，导致会话状态不一致，不符合“清除客户端登录态 Cookie”的验收要求。
 
-**建议:** 确保假哈希格式与真实哈希器格式一致；或统一使用 bcrypt（修复 B-1 后此问题自动解决，因为假哈希格式就是 bcrypt 格式）。
+**建议修复:**
+```go
+func ClearCookie(w http.ResponseWriter, secure bool) {
+    http.SetCookie(w, &http.Cookie{
+        Name:     "session_id",
+        Value:    "",
+        Path:     "/",
+        HttpOnly: true,
+        Secure:   secure,
+        SameSite: http.SameSiteLaxMode,
+        MaxAge:   0,
+        Expires:  time.Unix(0, 0),
+    })
+}
+```
 
 ---
 
 ## 3. 🟡 重要问题 (Important)
 
-### 🟡 I-1: RateLimiter 失败次数在锁定期后未重置
+### 🟡 I-1: 禁用账号枚举风险
+
+**文件:** `internal/service/auth_service.go:77-83`
+**问题:** 当攻击者恰好输入正确密码但账号已被禁用时，返回 `"账号已被禁用"`（HTTP 403），与错误密码返回的 `"账号或密码错误"`（HTTP 401）不同。虽然需要知道正确密码才能触发，但在特定场景下仍可能泄露账号存在性信息，与“防枚举”原则相违背。
+
+**建议:** 在密码校验通过后、返回禁用信息前，增加一个模拟的假哈希比对，确保与正常账号的响应时序一致；或考虑在需求层面统一返回“账号或密码错误”。
+
+---
+
+### 🟡 I-2: X-Forwarded-For 可被伪造，导致 IP 限流绕过
+
+**文件:** `internal/handler/auth_handler.go:67-68`、`internal/middleware/rate_limit_middleware.go:22-23`
+**代码:**
+```go
+if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+    ip = strings.Split(fwd, ",")[0]
+}
+```
+
+**问题:** 直接信任 `X-Forwarded-For` 首部，攻击者可轻易伪造该字段绕过 IP 限流。
+**建议:** 仅在确认服务部署在可信反向代理后时读取该字段，或增加代理 IP 白名单校验。
+
+---
+
+### 🟡 I-3: 需求缺失 — IP 维度的登录失败锁定
 
 **文件:** `internal/ratelimit/ratelimiter.go`
-**描述:** 当 `IsLocked` 发现锁定期已过（`time.Now().After(*info.lockedUntil)`），仅返回 `false`，但 `info.count` 并未重置。这意味着用户在锁定期后再次登录失败时，由于 `count >= 5`，会立即被重新锁定，导致实际上永久锁定。
-**建议:** 锁定期过期时同步重置 `count` 和 `lockedUntil`。
+**问题:** 需求文档明确要求“同一账号 **或同一 IP** 连续失败 5 次后锁定”，但当前仅实现了账号维度的锁定。IP 维度的 `IPRateLimiter` 仅做速率限制（10 次/分钟），未实现基于失败次数的锁定逻辑。
+
+**建议:** 为 IP 维度增加与账号类似的失败计数与锁定机制。
 
 ---
 
-### 🟡 I-2: IPRateLimiter 存在内存泄漏
+### 🟡 I-4: 二进制文件不应提交到版本库
 
-**文件:** `internal/ratelimit/ratelimiter.go`
-**行号:** 97-116
-**描述:** `IPRateLimiter.Allow` 在清理旧记录时，仅保留当前窗口内的请求时间。但如果某个 IP 长期不再访问，其条目仍会永远保留在 `r.requests` map 中，导致内存泄漏。
-**建议:** 添加定期清理逻辑，或限制 map 总大小。
+**文件:** `server`、`tests.test`
+**问题:** 编译产物（可执行文件）被直接提交到仓库，增加仓库体积，且存在安全风险（可能包含调试信息）。
 
----
-
-### 🟡 I-3: X-Forwarded-For 直接取第一个 IP 存在伪造风险
-
-**文件:** `internal/handler/auth_handler.go:68-69`, `internal/middleware/rate_limit_middleware.go:22-24`
-**描述:** 代码直接从 `X-Forwarded-For` 请求头取第一个 IP 作为客户端真实 IP，攻击者可轻易伪造此头部绕过 IP 限流。
-**建议:** 仅在受信任的反向代理环境中使用 `X-Forwarded-For`，并配置可信代理 IP 列表；生产环境建议从 `X-Real-IP` 或 `CF-Connecting-IP` 获取。
-
----
-
-### 🟡 I-4: 服务端未强制 HTTPS
-
-**文件:** `cmd/server/main.go`
-**描述:** 服务器使用 `http.ListenAndServe` 启动，无 TLS 支持。`Secure` cookie 标志默认设为 `false`，不满足生产环境安全要求。
-**建议:** 提供 HTTPS 配置选项；在生产环境中强制启用 TLS。
+**建议:**
+1. 删除已提交的二进制文件；
+2. 在 `.gitignore` 中添加：
+```
+server
+tests.test
+*.exe
+```
 
 ---
 
-### 🟡 I-5: Logout 端点未校验 HTTP 方法
+### 🟡 I-5: 缺少安全审计日志
 
-**文件:** `internal/handler/auth_handler.go:97-109`
-**描述:** `Logout` 方法未检查请求是否为 POST，任何 HTTP 方法都可触发登出。
-**建议:** 在 `main.go` 路由注册或 handler 内部添加方法校验。
+**问题:** 系统未记录登录失败、账号锁定、登出等安全事件。生产环境无法追踪攻击行为、满足合规审计要求。
 
----
-
-### 🟡 I-6: Session 并发数限制存在竞态窗口
-
-**文件:** `internal/session/manager.go:36-46`
-**描述:** `CountByUserID` 和 `DeleteOldestByUserID` 是两个独立操作，中间无锁保护，在并发场景下可能创建超过限制数量的会话。
-**建议:** 在 `SessionRepository` 接口层面将计数和删除合并为原子操作，或在 session manager 层使用全局锁。
+**建议:** 在关键路径增加结构化日志：
+- 登录成功 / 失败（脱敏处理，不记录密码）
+- 账号被锁定 / 解锁
+- 会话创建 / 销毁
 
 ---
 
-### 🟡 I-7: 多处 JSON 编码错误未处理
+## 4. 🟢 建议 (Nits)
 
-**文件:** `internal/handler/auth_handler.go`, `internal/middleware/auth_middleware.go`
-**描述:** `json.NewEncoder(w).Encode(...)` 的错误返回值被忽略。虽然 HTTP 响应已写入头部，但编码错误会导致客户端收到截断的 JSON。
-**建议:** 统一包装响应编码逻辑，至少记录日志。
+### 🟢 N-1: 验证码逻辑未实现
 
----
-
-## 4. 🟢 建议优化 (Nit / Suggestion)
-
-| # | 问题 | 位置 | 建议 |
-|---|------|------|------|
-| N-1 | 密码仅校验长度，未校验复杂度 | `auth_handler.go:47-55` | 增加大小写字母、数字、特殊字符等复杂度要求 |
-| N-2 | Login 接口未校验 Content-Type | `auth_handler.go:35` | 拒绝非 `application/json` 请求 |
-| N-3 | 缺少安全事件审计日志 | 全局 | 记录登录成功/失败/锁定/登出等事件 |
-| N-4 | 魔术数字硬编码 | 多处 | 将 `5`, `15`, `2*60*60` 等提取为配置常量 |
-| N-5 | 缺少 CSRF 防护 | `session/manager.go` | 考虑 SameSite=Strict 或引入 CSRF Token |
-| N-6 | `tests.test` 和 `server` 二进制未忽略 | 根目录 | 添加 `.gitignore` 排除编译产物 |
+**文件:** `internal/handler/auth_handler.go`
+**问题:** `LoginRequest` 包含 `Captcha` 字段，但 handler 中未做校验。需求文档标注为“可选”，建议至少预留接口并在文档中说明。
 
 ---
 
-## 5. 验收标准覆盖检查
+### 🟢 N-2: 账号格式校验过于宽松
 
-| 编号 | 验收项 | 状态 | 备注 |
+**文件:** `internal/handler/auth_handler.go:47-51`
+**问题:** 仅校验了账号长度（3-64 字符），未校验邮箱/手机号格式。需求文档要求“允许字母/数字/下划线/邮箱格式/手机号格式”。
+
+**建议:** 增加正则校验，或在文档中明确说明本期暂不校验格式。
+
+---
+
+### 🟢 N-3: IP 提取逻辑重复
+
+**文件:** `internal/handler/auth_handler.go:66-69`、`internal/middleware/rate_limit_middleware.go:21-24`
+**问题:** 相同的 IP 提取逻辑在两个地方重复。
+
+**建议:** 提取为 `internal/util/ip.go` 中的公共函数，如 `GetClientIP(r *http.Request) string`。
+
+---
+
+## 5. 验收标准（AC）对应检查
+
+| 编号 | 验收项 | 状态 | 说明 |
 |------|--------|------|------|
-| AC-1 | 正确登录 | ✅ | 实现正确 |
-| AC-2 | 错误凭证返回统一消息 | ✅ | 实现正确 |
-| AC-3 | 连续 5 次失败后锁定 | ⚠️ | 基本实现，但锁定后无法自动恢复（见 I-1） |
-| AC-4 | 禁用账号返回 403 | ✅ | 实现正确 |
+| AC-1 | 正确账号密码登录 | ✅ | 实现正确，返回 200 与用户信息 |
+| AC-2 | 错误账号或密码返回统一错误 | ⚠️ | 功能正确，但存在 **B-1 时序攻击漏洞** 可泄露账号存在性 |
+| AC-3 | 连续 5 次失败后锁定 | ⚠️ | 功能正确，但存在 **B-2 内存泄漏** |
+| AC-4 | 禁用账号返回 403 | ⚠️ | 实现正确，但存在 **I-1 信息泄露风险** |
 | AC-5 | 有效 Cookie 访问受保护接口 | ✅ | 实现正确 |
-| AC-6 | 无效 Cookie 返回 401 | ✅ | 实现正确 |
-| AC-7 | 退出登录清除 Cookie | ✅ | 实现正确 |
-| AC-8 | 密码使用 bcrypt/Argon2 | ❌ | **使用 SHA256，未通过**（见 B-1） |
+| AC-6 | 无效/过期 Cookie 返回 401 | ✅ | 实现正确 |
+| AC-7 | 退出登录清除 Cookie | ⚠️ | 服务端已清除，但 **B-3 客户端 Cookie 未正确删除** |
+| AC-8 | 密码使用 bcrypt/Argon2 | ✅ | `pkg/crypto/password.go` 使用 bcrypt，cost=12 |
 
 ---
 
-## 6. 评审结论
+## 6. 总结
 
-- **阻塞性问题:** 3 个（B-1, B-2, B-3）
-- **重要问题:** 7 个
-- **建议优化:** 6 个
+本次提交的登录系统整体架构清晰，核心功能实现完整，集成测试覆盖了主要场景。但 **3 个阻塞级问题** 涉及安全底线（时序攻击防护失效、资源耗尽风险、会话清理不彻底），必须在合并前修复。
 
-**结论: 🔴 存在阻塞性问题，不建议合并。**
-
-请在修复 B-1（更换密码哈希算法）、B-2（修复数据竞争）、B-3（修复时序攻击防护）后重新提交评审。
+**修复优先级：**
+1. **立即：** B-1（时序攻击漏洞）、B-3（Cookie 清理）
+2. **高优先级：** B-2（内存泄漏）、I-2（IP 伪造）、I-4（清理二进制）
+3. **中优先级：** I-1（禁用账号枚举）、I-3（IP 锁定）、I-5（审计日志）
