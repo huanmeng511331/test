@@ -24,10 +24,24 @@ func NewRateLimiter() *RateLimiter {
 	}
 }
 
+const staleThreshold = 15 * time.Minute
+
+// cleanup removes stale entries to prevent unbounded memory growth.
+func (r *RateLimiter) cleanup() {
+	cutoff := time.Now().Add(-staleThreshold)
+	for key, info := range r.attempts {
+		if info.lastFail.Before(cutoff) && (info.lockedUntil == nil || info.lockedUntil.Before(cutoff)) {
+			delete(r.attempts, key)
+		}
+	}
+}
+
 // RecordFailure records a failed login attempt for a key.
 func (r *RateLimiter) RecordFailure(key string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	r.cleanup()
 
 	info, exists := r.attempts[key]
 	if !exists {
@@ -42,6 +56,8 @@ func (r *RateLimiter) RecordFailure(key string) {
 func (r *RateLimiter) IsLocked(key string) (bool, time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	r.cleanup()
 
 	info, exists := r.attempts[key]
 	if !exists {

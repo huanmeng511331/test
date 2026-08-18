@@ -5,11 +5,20 @@ import (
 	"net/http"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"login-system/internal/models"
 	"login-system/internal/repository"
 	"login-system/internal/session"
 	"login-system/pkg/crypto"
 )
+
+var fakeHash string
+
+func init() {
+	fakeHashBytes, _ := bcrypt.GenerateFromPassword([]byte("fake"), bcrypt.DefaultCost)
+	fakeHash = string(fakeHashBytes)
+}
 
 // AuthService handles authentication logic.
 type AuthService struct {
@@ -56,7 +65,7 @@ func (s *AuthService) Login(account, password string, rememberMe bool, ip, userA
 
 	// If user doesn't exist, do fake hash comparison to prevent timing attacks
 	if user == nil {
-		_ = s.passwordHasher.Verify(password, "$2a$12$fakehashforconstanttimecomparison")
+		_ = s.passwordHasher.Verify(password, fakeHash)
 		return &LoginResult{
 			Success:    false,
 			Message:    "账号或密码错误",
