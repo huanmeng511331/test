@@ -32,11 +32,11 @@ func TestFailedAttemptTracker(t *testing.T) {
 	// Reset failed attempts
 	tracker.ResetFailedAttempts(key)
 	assert.False(t, tracker.IsLocked(key))
-	assert.Equal(t, 0, tracker.GetLockoutRemaining(key))
+	assert.Equal(t, time.Duration(0), tracker.GetLockoutRemaining(key))
 }
 
 func TestFailedAttemptTracker_UnknownKey(t *testing.T) {
 	tracker := NewFailedAttemptTracker()
 	assert.False(t, tracker.IsLocked("unknown"))
-	assert.Equal(t, 0, tracker.GetLockoutRemaining("unknown"))
+	assert.Equal(t, time.Duration(0), tracker.GetLockoutRemaining("unknown"))
 }
