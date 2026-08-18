@@ -40,8 +40,8 @@ func (r *RateLimiter) RecordFailure(key string) {
 
 // IsLocked checks if a key is currently locked due to too many failures.
 func (r *RateLimiter) IsLocked(key string) (bool, time.Duration) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	info, exists := r.attempts[key]
 	if !exists {

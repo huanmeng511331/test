@@ -23,7 +23,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *service.AuthService) {
 	sessionRepo := repository.NewMemorySessionRepository()
 
 	// Initialize services
-	hasher := cryptopkg.NewSHA256Hasher(16)
+	hasher := cryptopkg.NewBcryptHasher(12)
 	sessionManager := session.NewManager(sessionRepo, 3)
 	authService := service.NewAuthService(userRepo, sessionManager, hasher, false)
 
