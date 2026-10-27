@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.dtastudio.todo.dao.mapper.TodoMapper">
+
+    <resultMap id="TodoResultMap" type="com.dtastudio.todo.model.entity.TodoDO">
+        <id column="id" property="id" jdbcType="BIGINT"/>
+        <result column="name" property="name" jdbcType="VARCHAR"/>
+        <result column="description" property="description" jdbcType="VARCHAR"/>
+        <result column="status" property="status" jdbcType="TINYINT"/>
+        <result column="gmt_create" property="gmtCreate" jdbcType="TIMESTAMP"/>
+        <result column="gmt_modified" property="gmtModified" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.dtastudio.todo.model.entity.TodoDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO todo (name, description, status, gmt_create, gmt_modified)
+        VALUES (#{name}, #{description}, #{status}, #{gmtCreate}, #{gmtModified})
+    </insert>
+
+    <select id="selectById" resultMap="TodoResultMap">
+        SELECT id, name, description, status, gmt_create, gmt_modified
+        FROM todo
+        WHERE id = #{id}
+    </select>
+
+</mapper>
