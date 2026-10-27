@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.antdigital.todo.dao.mapper.TodoItemMapper">
+
+    <resultMap id="BaseResultMap" type="com.antdigital.todo.model.do.TodoItemDO">
+        <id column="id" property="id" jdbcType="BIGINT"/>
+        <result column="item_name" property="itemName" jdbcType="VARCHAR"/>
+        <result column="description" property="description" jdbcType="VARCHAR"/>
+        <result column="gmt_create" property="gmtCreate" jdbcType="TIMESTAMP"/>
+        <result column="gmt_modified" property="gmtModified" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.antdigital.todo.model.do.TodoItemDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO todo_item (item_name, description)
+        VALUES (#{itemName}, #{description})
+    </insert>
+
+    <select id="selectById" parameterType="java.lang.Long" resultMap="BaseResultMap">
+        SELECT id, item_name, description, gmt_create, gmt_modified
+        FROM todo_item
+        WHERE id = #{id}
+    </select>
+</mapper>
