@@ -1,0 +1,27 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: todo-app
+  datasource:
+    url: jdbc:mysql://localhost:3306/todo_app?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.todoapp.todo.dao.entity
+  configuration:
+    map-underscore-to-camel-case: true
+
+# 功能开关（可灰度/可应急）
+feature:
+  todo:
+    create:
+      enabled: true
+
+logging:
+  level:
+    com.todoapp: INFO
