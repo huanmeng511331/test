@@ -6,11 +6,13 @@ import com.todoapp.todo.dao.entity.TodoDO;
 import com.todoapp.todo.dao.mapper.TodoMapper;
 import com.todoapp.todo.service.dto.TodoCreateRequest;
 import com.todoapp.todo.service.dto.TodoCreateResult;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -25,7 +27,8 @@ import static org.mockito.Mockito.when;
  *
  * <p>被测类: TodoServiceImpl
  * <p>Mock 依赖: TodoMapper
- * <p>覆盖场景: 正常路径、参数校验（R01~R03）、边界值、异常路径（DB 异常/ID 为空）
+ * <p>真实依赖: SimpleMeterRegistry（内存指标注册表，验证埋点正确性）
+ * <p>覆盖场景: 正常路径、参数校验（R01~R03）、边界值、异常路径（DB 异常/ID 为空）、指标埋点
  *
  * @author AiWork
  * @date 2026/10/28
@@ -45,8 +48,15 @@ class TodoServiceImplTest {
     @Mock
     private TodoMapper todoMapper;
 
-    @InjectMocks
+    private MeterRegistry meterRegistry;
+
     private TodoServiceImpl todoService;
+
+    @BeforeEach
+    void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
+        todoService = new TodoServiceImpl(todoMapper, meterRegistry);
+    }
 
     // ==================== createTodo 正常路径 ====================
 
@@ -234,6 +244,43 @@ class TodoServiceImplTest {
                     BusinessException be = (BusinessException) ex;
                     assertThat(be.getErrorCode()).isEqualTo(TodoErrorCode.CREATE_FAILED.getCode());
                 });
+    }
+
+    // ==================== 指标埋点验证 ====================
+
+    @Test
+    @DisplayName("指标埋点：成功路径后 total/success 计数 +1，failure 为 0")
+    void should_recordSuccessMetrics_when_createSucceeds() {
+        // Arrange
+        TodoCreateRequest request = buildRequest(TEST_TITLE, TEST_DESCRIPTION);
+        when(todoMapper.insert(any(TodoDO.class))).thenAnswer(invocation -> {
+            TodoDO todo = invocation.getArgument(0);
+            todo.setId(2001L);
+            return 1;
+        });
+
+        // Act
+        todoService.createTodo(request);
+
+        // Assert
+        assertThat(meterRegistry.counter("todo.create.total").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("todo.create.success").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("todo.create.failure").count()).isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("指标埋点：失败路径后 total/failure 计数 +1，success 为 0")
+    void should_recordFailureMetrics_when_createFails() {
+        // Arrange
+        TodoCreateRequest request = buildRequest(null, TEST_DESCRIPTION);
+
+        // Act & Assert
+        assertThatThrownBy(() -> todoService.createTodo(request))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(meterRegistry.counter("todo.create.total").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("todo.create.failure").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("todo.create.success").count()).isEqualTo(0.0);
     }
 
     // ==================== 测试数据构造 ====================

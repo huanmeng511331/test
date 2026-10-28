@@ -41,7 +41,7 @@ public class LoginContext {
      * @param userId 原始用户标识
      * @return 脱敏后的用户标识
      */
-    private static String maskUserId(String userId) {
+    public static String maskUserId(String userId) {
         if (userId == null || userId.length() <= 2) {
             return "***";
         }

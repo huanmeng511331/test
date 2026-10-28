@@ -21,6 +21,10 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <p>本期不自实现登录注册流程，通过请求头模拟 SSO/IAM 下发的登录态，
  * 后续接入真实 SSO 时替换请求头来源即可。
  *
+ * <p><b>安全警告</b>：当前 userId 与 tenantId 直接取自请求头，客户端可伪造。
+ * 生产部署前必须接入网关层鉴权（SSO/IAM），由网关下发可信的请求头，
+ * 或替换为从受信任的 Token（如 JWT）中解析，禁止信任客户端直接传入的标识。
+ *
  * @author AiWork
  * @date 2026/10/28
  */
@@ -37,7 +41,8 @@ public class LoginInterceptor implements HandlerInterceptor {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
+                             Object handler) throws Exception {
         String userId = request.getHeader(HEADER_USER_ID);
         if (userId == null || userId.isBlank()) {
             logger.warn("login check failed, uri: {}", request.getRequestURI());
@@ -59,7 +64,8 @@ public class LoginInterceptor implements HandlerInterceptor {
     }
 
     @Override
-    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception ex) {
         LoginContextHolder.clear();
     }
 }
