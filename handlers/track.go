@@ -11,7 +11,7 @@ import (
 
 type TrackRequest struct {
 	Endpoint         string `json:"endpoint" binding:"required"`
-	CallerID         string `json:"callerId"`
+	CallerID         string `json:"callerId" binding:"required"`
 	CallerType       string `json:"callerType"`
 	CallerLevel      string `json:"callerLevel"`
 	CallerDepartment string `json:"callerDepartment"`

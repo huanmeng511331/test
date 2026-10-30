@@ -50,8 +50,6 @@ func exportHelloData(f *excelize.File) {
 	sheet := "HelloWorld"
 	index, _ := f.NewSheet(sheet)
 	f.SetActiveSheet(index)
-	f.SetSheetName("Sheet1", sheet)
-
 	// 设置表头
 	f.SetCellValue(sheet, "A1", "调用时间")
 	f.SetCellValue(sheet, "B1", "调用者ID")
@@ -67,6 +65,9 @@ func exportHelloData(f *excelize.File) {
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), record.CallerID)
 		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), "name=World")
 	}
+
+	// 删除默认 Sheet1
+	f.DeleteSheet("Sheet1")
 }
 
 func exportHashData(f *excelize.File) {
@@ -99,7 +100,7 @@ func exportSortData(f *excelize.File) {
 	// 设置表头
 	f.SetCellValue(sheet, "A1", "调用时间")
 	f.SetCellValue(sheet, "B1", "调用者ID")
-	f.SetCellValue(sheet, "C1", "数组长度")
+	f.SetCellValue(sheet, "C1", "原始数组")
 
 	// 查询数据
 	var records []models.TrackingRecord
