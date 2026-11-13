@@ -1,0 +1,38 @@
+"""工单枚举、人员名单与编号常量。"""
+
+from __future__ import annotations
+
+from app.config import DEFAULT_OPERATOR
+
+STATUS_PENDING = "待处理"
+STATUS_PROCESSING = "处理中"
+STATUS_COMPLETED = "已完成"
+STATUS_CLOSED = "已关闭"
+
+STATUSES: tuple[str, ...] = (STATUS_PENDING, STATUS_PROCESSING, STATUS_COMPLETED, STATUS_CLOSED)
+LEVELS: tuple[str, ...] = ("高", "中", "低")
+DEMO_ASSIGNEES: tuple[str, ...] = ("李强", "王敏", "赵磊", "陈晨")
+
+ORDER_NO_PREFIX = "WO"
+ORDER_NO_SEQ_LENGTH = 4
+MAX_ORDER_SEQ = 9999
+ORDER_NO_RETRY_TIMES = 1
+DEFAULT_PAGE_SIZE = 10
+MAX_PAGE_SIZE = 100
+
+__all__ = [
+    "STATUS_PENDING",
+    "STATUS_PROCESSING",
+    "STATUS_COMPLETED",
+    "STATUS_CLOSED",
+    "STATUSES",
+    "LEVELS",
+    "DEMO_ASSIGNEES",
+    "DEFAULT_OPERATOR",
+    "ORDER_NO_PREFIX",
+    "ORDER_NO_SEQ_LENGTH",
+    "MAX_ORDER_SEQ",
+    "ORDER_NO_RETRY_TIMES",
+    "DEFAULT_PAGE_SIZE",
+    "MAX_PAGE_SIZE",
+]
