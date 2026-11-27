@@ -1,5 +1,6 @@
 package com.dtazziboot.base.todo.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -9,13 +10,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.dtazziboot.base.common.exception.GlobalExceptionHandler;
 import com.dtazziboot.base.todo.config.TodoProperties;
+import com.dtazziboot.base.todo.metrics.TodoItemCreateMetrics;
 import com.dtazziboot.base.todo.model.dto.CreateTodoItemRequest;
 import com.dtazziboot.base.todo.model.dto.TodoItemResult;
 import com.dtazziboot.base.todo.service.TodoItemService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -31,13 +36,20 @@ class TodoItemControllerTest {
 
     private TodoProperties todoProperties;
 
+    private SimpleMeterRegistry meterRegistry;
+
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         todoItemService = mock(TodoItemService.class);
         todoProperties = new TodoProperties();
-        mockMvc = MockMvcBuilders.standaloneSetup(new TodoItemController(todoItemService, todoProperties))
+        // CR P0-1 修复:standalone 模式不自动装配 @RestControllerAdvice,必须显式注册全局异常处理器,
+        // 否则 BizException 未转统一错误体,负向用例断言 $.code 前即抛 NestedServletException
+        meterRegistry = new SimpleMeterRegistry();
+        mockMvc = MockMvcBuilders.standaloneSetup(new TodoItemController(todoItemService, todoProperties,
+                        new TodoItemCreateMetrics(meterRegistry)))
+                .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
 
@@ -58,6 +70,25 @@ class TodoItemControllerTest {
                 .andExpect(jsonPath("$.data.id").value(10001))
                 .andExpect(jsonPath("$.data.creator").value("zhangsan"))
                 .andExpect(jsonPath("$.data.gmtCreate").value("2026-11-27 10:30:00"));
+    }
+
+    @Test
+    @DisplayName("DB 写入失败:埋点单独计数,全局异常处理兜底返回 SYS_999")
+    void should_returnSys999_when_dbWriteFails() throws Exception {
+        // Arrange
+        when(todoItemService.createTodoItem(any(CreateTodoItemRequest.class)))
+                .thenThrow(new DataAccessResourceFailureException("connection refused"));
+
+        // Act & Assert:控制器捕获计数后原样上抛,由 GlobalExceptionHandler 转 SYS_999
+        mockMvc.perform(post(CREATE_URI)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"完成周报\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SYS_999"))
+                .andExpect(jsonPath("$.msg").value("系统繁忙,请稍后重试"));
+        verify(todoItemService).createTodoItem(any());
+        assertThat(meterRegistry.counter("todo_item_create_total",
+                "source", "oneapi", "result", "db_fail", "code", "SYS_999").count()).isEqualTo(1.0);
     }
 
     @Test

@@ -14,6 +14,7 @@ import com.dtazziboot.base.todo.mapper.TodoItemMapper;
 import com.dtazziboot.base.todo.model.dto.CreateTodoItemRequest;
 import com.dtazziboot.base.todo.model.dto.TodoItemResult;
 import com.dtazziboot.base.todo.model.entity.TodoItemDO;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -59,7 +60,7 @@ class TodoItemServiceImplTest {
         when(todoItemMapper.insert(any(TodoItemDO.class))).thenAnswer(invocation -> {
             TodoItemDO entity = invocation.getArgument(0);
             entity.setId(10001L);
-            entity.setGmtCreate(java.time.LocalDateTime.of(2026, 11, 27, 10, 30, 0));
+            entity.setGmtCreate(LocalDateTime.of(2026, 11, 27, 10, 30, 0));
             return 1;
         });
 
@@ -142,6 +143,23 @@ class TodoItemServiceImplTest {
         assertThatThrownBy(() -> todoItemService.createTodoItem(buildRequest("完成周报", null)))
                 .isInstanceOf(DataAccessResourceFailureException.class)
                 .hasMessageContaining("connection refused");
+    }
+
+    @Test
+    @DisplayName("绕过 Web 层的非法入参(name 为 null 或 request 为 null):兜底 TODO_001,不落库")
+    void should_throwNameRequired_when_nameNullOrRequestNull() {
+        // Act
+        BizException nameNullEx = catchThrowableOfType(
+                () -> todoItemService.createTodoItem(buildRequest(null, null)),
+                BizException.class);
+        BizException requestNullEx = catchThrowableOfType(
+                () -> todoItemService.createTodoItem(null),
+                BizException.class);
+
+        // Assert
+        assertThat(nameNullEx.getCode()).isEqualTo("TODO_001");
+        assertThat(requestNullEx.getCode()).isEqualTo("TODO_001");
+        verify(todoItemMapper, never()).insert(any(TodoItemDO.class));
     }
 
     private CreateTodoItemRequest buildRequest(String name, String description) {

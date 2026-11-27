@@ -14,7 +14,7 @@ todo → MySQL(todo_item 单表)
 
 ## 分层与调用关系
 
-`TodoItemController`(Web 层:功能开关、R01~R03 参数校验)
+`TodoItemController`(Web 层:接口埋点、功能开关、R01~R03 参数校验)
 → `TodoItemService`/`TodoItemServiceImpl`(业务层:实体组装、创建人注入)
 → `TodoItemMapper`(DAO 层:MyBatis-Plus 单表插入,参数化预编译)
 → MySQL `todo_item`。
@@ -23,13 +23,20 @@ todo → MySQL(todo_item 单表)
 
 application.yml < application-{profile}.yml < 环境变量 < 启动参数。
 DB 密码经环境变量(`DB_USERNAME`/`DB_PASSWORD`)注入,禁止硬编码。
-业务开关:`todo.create.enabled`(关闭后新增待办返回 `TODO_004` 功能维护中,秒级止血)。
+业务开关:`todo.create.enabled`(关闭后新增待办返回 `TODO_004` 功能维护中;静态配置,重启级止血,多副本滚动生效,接入配置中心后升级为秒级动态止血)。
 
 ## 错误处理
 
 业务异常统一抛 `BizException(code, message)`,由 `GlobalExceptionHandler` 转为 `{code, msg, data}`;
 未识别异常兜底 `SYS_999` 并记录 ERROR 日志;禁止吞异常。
 错误码:TODO_001/002/003(参数校验)、TODO_004(开关关闭)、AUTH_001(登录态)、SYS_999(系统兜底)。
+
+## 可观测
+
+- 指标:Micrometer(经 spring-boot-starter-actuator,`/actuator/metrics` 暴露)。
+  `todo_item_create_total`(tags: source/result/code,成功与各错误码分流,DB 写入失败单独计为 `result=db_fail`)
+  与 `todo_item_create_cost_milliseconds`(处理耗时分布),见 `TodoItemCreateMetrics`。
+- 日志:console pattern 携带 `%X{traceId}`;traceId 由 `LoginUserInterceptor` 注入 MDC(网关头 `X-Trace-Id` 透传,缺省自动生成)。
 
 ## 安全约束
 
@@ -41,7 +48,7 @@ DB 密码经环境变量(`DB_USERNAME`/`DB_PASSWORD`)注入,禁止硬编码。
 ## 测试策略
 
 - Service 层:JUnit 5 + Mockito 纯单测,不启动容器(`TodoItemServiceImplTest`)。
-- Controller 层:MockMvc standalone + Mock Service(`TodoItemControllerTest`)。
+- Controller/拦截器层:MockMvc standalone + 显式 `setControllerAdvice`(`TodoItemControllerTest`)、拦截器链路测试(`LoginUserInterceptorTest`)。
 - DAO/SQL:当前最小闭环仅单表插入,暂不建集成测试;查询类功能上线时按 Testcontainers+MySQL 补齐。
 
 ## AI 编码约束
