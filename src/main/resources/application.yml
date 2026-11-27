@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: todo-base-app
+  datasource:
+    # connectTimeout/socketTimeout(毫秒)消除 DB 无限等待;serverTimezone 与应用统一时区 Asia/Shanghai 对齐(CR P0-2/P1-1)
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:todo_base}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&connectTimeout=1000&socketTimeout=3000
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 连接池获取连接与连接校验超时(毫秒),避免网络分区时业务线程永久挂起(CR P0-2)
+      connection-timeout: 3000
+      validation-timeout: 1000
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 暴露指标端点,承接 todo_item_create_* 埋点(设计 §7.1,CR P0-3)
+        include: health,info,metrics
+
+todo:
+  create:
+    # 功能开关: false 时 /api/todo/items 返回"功能维护中"(重启级止血,多副本滚动生效;接入配置中心后可升级为秒级动态止血,CR P0-4)
+    enabled: true
+
+logging:
+  pattern:
+    # traceId 由 LoginUserInterceptor 注入 MDC(网关头 X-Trace-Id 透传,缺省自动生成),异常/关键日志携带链路标识(CR P1-2)
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId}] %-5level %logger{50} - %msg%n"
+  level:
+    com.dtazziboot.base: info
