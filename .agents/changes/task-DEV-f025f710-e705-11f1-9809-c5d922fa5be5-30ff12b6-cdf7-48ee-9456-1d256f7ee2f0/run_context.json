@@ -1,0 +1,20 @@
+{
+  "task_id": "task-DEV-f025f710-e705-11f1-9809-c5d922fa5be5-30ff12b6-cdf7-48ee-9456-1d256f7ee2f0",
+  "stage": "review",
+  "skill": "dtazziboot-java-code-review",
+  "change": "底座变更_目标_帮助用户记录日常待办事项",
+  "reviewed_commit": "5423973",
+  "reviewed_branch": "task/DEV-f025f710-e705-11f1-9809-c5d922fa5be5-30ff12b6-cdf7-48ee-9456-1d256f7ee2f0",
+  "review_date": "2026-11-27",
+  "blocker_count": 4,
+  "issue_counts": {
+    "p0": 4,
+    "p1": 2,
+    "p2": 7
+  },
+  "verdict": "修复后合并（P0×4 阻塞：控制器测试缺 setControllerAdvice 导致 4 个负向用例必然失败；DB 调用无超时 G9.2；核心链路无指标埋点 G16.1；功能开关需重启不满足秒级止血 G17.1）",
+  "artifacts": {
+    "cr_report": ".agents/20261127-底座变更_目标_帮助用户记录日常待办事项/cr_report.md",
+    "cr_checklist": ".agents/20261127-底座变更_目标_帮助用户记录日常待办事项/2026-11-27-todo-create-cr-checklist.md"
+  }
+}
